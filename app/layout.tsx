@@ -1,0 +1,26 @@
+import type { Metadata } from "next";
+import { Archivo_Black, DM_Sans } from "next/font/google";
+import { headers } from "next/headers";
+import "./globals.css";
+
+const display = Archivo_Black({ weight: "400", variable: "--font-display", subsets: ["latin"] });
+const sans = DM_Sans({ variable: "--font-sans", subsets: ["latin"] });
+
+export async function generateMetadata(): Promise<Metadata> {
+  const incoming = await headers();
+  const host = incoming.get("x-forwarded-host") ?? incoming.get("host") ?? "localhost:3000";
+  const protocol = incoming.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
+  const base = new URL(`${protocol}://${host}`);
+  const description = "Turn photos, notes, and timestamps into a professional record with PROVya, a Tek-Pak Inc. product.";
+  return {
+    metadataBase: base,
+    title: "PROVya — Evidence Made Easy",
+    description,
+    openGraph: { title: "PROVya — Evidence Made Easy", description, type: "website", images: [{ url: new URL("/og.png", base).toString(), width: 1200, height: 630, alt: "PROVya — Evidence made easy" }] },
+    twitter: { card: "summary_large_image", title: "PROVya — Evidence Made Easy", description, images: [new URL("/og.png", base).toString()] },
+  };
+}
+
+export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  return <html lang="en"><body className={`${display.variable} ${sans.variable}`}>{children}</body></html>;
+}
