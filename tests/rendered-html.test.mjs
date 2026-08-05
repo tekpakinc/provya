@@ -38,3 +38,17 @@ test("declares managed database and evidence storage", async () => {
   assert.equal(hosting.d1, "DB");
   assert.equal(hosting.r2, "EVIDENCE");
 });
+
+test("ships an installable app without offline-caching private records", async () => {
+  const [manifest, layout, serviceWorker] = await Promise.all([
+    readFile(new URL("app/manifest.ts", root), "utf8"),
+    readFile(new URL("app/layout.tsx", root), "utf8"),
+    readFile(new URL("public/sw.js", root), "utf8"),
+  ]);
+  assert.match(manifest, /display: "standalone"/);
+  assert.match(manifest, /provya-logo-v2\.png/);
+  assert.match(layout, /appleWebApp/);
+  assert.match(layout, /InstallPrompt/);
+  assert.match(serviceWorker, /url\.pathname\.startsWith\("\/api\/"\)/);
+  assert.match(serviceWorker, /url\.pathname\.startsWith\("\/demo"\)/);
+});
