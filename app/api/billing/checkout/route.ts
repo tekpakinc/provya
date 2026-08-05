@@ -1,10 +1,12 @@
 import { env } from "cloudflare:workers";
+import { crossSiteResponse, isSameOriginMutation } from "@/lib/request-security";
 
 function user(request: Request) {
   return { id: request.headers.get("oai-authenticated-user-id"), email: request.headers.get("oai-authenticated-user-email") };
 }
 
 export async function POST(request: Request) {
+  if (!isSameOriginMutation(request)) return crossSiteResponse();
   const current = user(request);
   if (!current.id) return Response.json({ error: "Sign in required." }, { status: 401 });
   const runtime = env as unknown as { STRIPE_SECRET_KEY?: string; STRIPE_PRICE_ID?: string };

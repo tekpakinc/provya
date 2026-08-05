@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { getPlan, limits } from "@/lib/billing";
+import { crossSiteResponse, isSameOriginMutation } from "@/lib/request-security";
 
 function owner(request: Request) {
   const authenticated = request.headers.get("oai-authenticated-user-id");
@@ -9,6 +10,7 @@ function owner(request: Request) {
 }
 
 export async function POST(request: Request) {
+  if (!isSameOriginMutation(request)) return crossSiteResponse();
   const ownerId = owner(request);
   if (!ownerId) return Response.json({ error: "Sign in required." }, { status: 401 });
   const form = await request.formData();
@@ -24,9 +26,13 @@ export async function POST(request: Request) {
     cursor = listed.truncated ? listed.cursor : undefined;
   } while (cursor);
   if (count >= allowance.evidence || total + file.size > allowance.storage) return Response.json({ error: "Your evidence storage limit has been reached.", upgradeRequired: true }, { status: 402 });
+  const bytes = await file.arrayBuffer();
+  const hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))).map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  const claimedHash = String(form.get("hash") || "");
+  if (claimedHash && claimedHash !== hash) return Response.json({ error: "The uploaded file did not match its calculated fingerprint." }, { status: 400 });
   const key = `${ownerId}/${evidenceId}`;
-  await env.EVIDENCE.put(key, file.stream(), { httpMetadata: { contentType: file.type || "application/octet-stream" }, customMetadata: { filename: file.name } });
-  return Response.json({ ok: true, key });
+  await env.EVIDENCE.put(key, bytes, { httpMetadata: { contentType: file.type || "application/octet-stream" }, customMetadata: { filename: file.name, sha256: hash } });
+  return Response.json({ ok: true, key, hash });
 }
 
 export async function GET(request: Request) {
@@ -44,6 +50,7 @@ export async function GET(request: Request) {
 }
 
 export async function DELETE(request: Request) {
+  if (!isSameOriginMutation(request)) return crossSiteResponse();
   const ownerId = owner(request);
   if (!ownerId) return Response.json({ error: "Sign in required." }, { status: 401 });
   const id = new URL(request.url).searchParams.get("id");

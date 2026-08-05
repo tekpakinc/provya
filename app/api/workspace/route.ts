@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { getPlan, limits } from "@/lib/billing";
+import { crossSiteResponse, isSameOriginMutation } from "@/lib/request-security";
 
 function owner(request: Request) {
   const authenticated = request.headers.get("oai-authenticated-user-id");
@@ -27,6 +28,7 @@ export async function GET(request: Request) {
 }
 
 export async function PUT(request: Request) {
+  if (!isSameOriginMutation(request)) return crossSiteResponse();
   const ownerId = owner(request);
   if (!ownerId) return Response.json({ error: "Sign in required." }, { status: 401 });
   const workspace = await request.json();
