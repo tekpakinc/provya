@@ -7,7 +7,8 @@ type Entry = { id: string; matterId: string; type: string; party: string; outcom
 type Evidence = { id: string; matterId: string; name: string; mime: string; size: number; hash: string; createdAt: string; documentType?: string; transcription?: string; transcriptionReviewedAt?: string };
 type Workspace = { version: 1; profile: { userType: string }; matters: Matter[]; entries: Entry[]; evidence: Evidence[] };
 type Choice = { value: string; other: string };
-type ModalName = "welcome" | "matter" | "entry" | "evidence" | "scan" | null;
+type ModalName = "welcome" | "matter" | "entry" | "evidence" | "scan" | "upgrade" | null;
+type Plan = "free" | "plus";
 
 const blank: Workspace = { version: 1, profile: { userType: "" }, matters: [], entries: [], evidence: [] };
 const matterTypes = ["Family & parenting", "Housing & property", "Freelance work", "Automotive repair", "Contractor project", "Shipping or delivery", "Legal or administrative"];
@@ -31,20 +32,24 @@ export default function AppPage() {
   const [view, setView] = useState<"overview" | "timeline" | "evidence" | "export">("overview");
   const [status, setStatus] = useState("Loading your workspace…");
   const [loaded, setLoaded] = useState(false);
+  const [plan, setPlan] = useState<Plan>("free");
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => { (async () => {
     try {
       const response = await fetch("/api/workspace", { cache: "no-store" });
       if (!response.ok) throw new Error();
-      const data = await response.json() as { workspace: Workspace | null };
+      const data = await response.json() as { workspace: Workspace | null; plan?: Plan };
       const next = data.workspace || blank;
+      setPlan(data.plan === "plus" ? "plus" : "free");
       setWorkspace(next); setActiveMatterId(next.matters[0]?.id || "");
       if (!next.profile.userType || !next.matters.length) setModal("welcome");
       setStatus(data.workspace ? "Saved securely" : "New workspace");
     } catch { setStatus("Unable to load workspace"); }
     setLoaded(true);
   })(); }, []);
+
+  useEffect(() => { if (!loaded) return; const sessionId = new URLSearchParams(location.search).get("checkout"); if (!sessionId) return; (async()=>{ try { const response=await fetch(`/api/billing/confirm?session_id=${encodeURIComponent(sessionId)}`); if(!response.ok)throw new Error(); setPlan("plus"); setStatus("PROVya Plus unlocked"); history.replaceState({},"","/demo"); } catch { setStatus("Purchase verification failed"); } })(); }, [loaded]);
 
   useEffect(() => {
     if (!loaded) return;
@@ -63,6 +68,9 @@ export default function AppPage() {
   const entries = useMemo(() => workspace.entries.filter((entry) => entry.matterId === active?.id).sort((a,b) => +new Date(b.happenedAt) - +new Date(a.happenedAt)), [workspace.entries, active]);
   const evidence = useMemo(() => workspace.evidence.filter((item) => item.matterId === active?.id), [workspace.evidence, active]);
   const update = (patch: Partial<Workspace>) => setWorkspace((current) => ({ ...current, ...patch }));
+  const usage = { matters: workspace.matters.length, entries: workspace.entries.length, evidence: workspace.evidence.length, scans: workspace.evidence.filter(item=>item.transcription).length, storage: workspace.evidence.reduce((sum,item)=>sum+item.size,0) };
+  const gated = (kind: keyof typeof usage) => plan === "free" && usage[kind] >= ({ matters:1, entries:25, evidence:10, scans:3, storage:100*1024*1024 })[kind];
+  const openOrUpgrade = (target: ModalName, kind: keyof typeof usage) => gated(kind) ? setModal("upgrade") : setModal(target);
 
   function exportRecord() {
     if (!active) return;
@@ -74,10 +82,10 @@ export default function AppPage() {
   if (!loaded) return <main className="mvp-loading"><b>PROVya</b><span>{status}</span></main>;
 
   return <main className="mvp-app">
-    <header className="mvp-top"><a href="/" className="mvp-wordmark">PROV<span>ya</span></a><div className={`save-state ${status.includes("failed") || status.includes("Unable") ? "bad" : ""}`}><i />{status}</div><div className="mvp-actions"><button onClick={() => setModal("matter")}>New matter</button><button className="primary" disabled={!active} onClick={() => setModal("entry")}>+ Add entry</button></div></header>
+    <header className="mvp-top"><a href="/" className="mvp-wordmark">PROV<span>ya</span></a><button className={`plan-badge ${plan}`} onClick={()=>setModal("upgrade")}>{plan === "plus" ? "PLUS · LIFETIME" : "FREE PLAN"}</button><div className={`save-state ${status.includes("failed") || status.includes("Unable") ? "bad" : ""}`}><i />{status}</div><div className="mvp-actions"><button onClick={() => openOrUpgrade("matter","matters")}>New matter</button><button className="primary" disabled={!active} onClick={() => openOrUpgrade("entry","entries")}>+ Add entry</button></div></header>
     <aside className="mvp-side"><p>YOUR MATTERS</p><div className="matter-list">{workspace.matters.map((matter) => <button key={matter.id} className={matter.id === active?.id ? "active" : ""} onClick={() => { setActiveMatterId(matter.id); setView("overview"); }}><b>{matter.title}</b><span>{matter.type}</span></button>)}</div>{active && <nav>{([['overview','Overview'],['timeline','Timeline'],['evidence','Evidence'],['export','Export']] as const).map(([key,label]) => <button className={view === key ? "active" : ""} key={key} onClick={() => setView(key)}>{label}<em>{key === "timeline" ? entries.length : key === "evidence" ? evidence.length : ""}</em></button>)}</nav>}<div className="mvp-trust"><b>Private workspace</b><span>Your records are saved to your signed-in workspace.</span></div></aside>
     <section className="mvp-content">{!active ? <Empty onStart={() => setModal("welcome")} /> : <>
-      <div className="mvp-heading"><div><span>{active.type}</span><h1>{active.title}</h1><p>{active.role} · {active.status}</p></div><div className="heading-actions"><button onClick={() => setModal("scan")}>Scan handwriting</button><button onClick={() => setModal("evidence")}>Import evidence</button></div></div>
+      <div className="mvp-heading"><div><span>{active.type}</span><h1>{active.title}</h1><p>{active.role} · {active.status}</p></div><div className="heading-actions"><button onClick={() => openOrUpgrade("scan","scans")}>Scan handwriting</button><button onClick={() => openOrUpgrade("evidence",gated("storage")?"storage":"evidence")}>Import evidence</button></div></div>
       {view === "overview" && <Overview entries={entries} evidence={evidence} onEntry={() => setModal("entry")} onEvidence={() => setModal("evidence")} />}
       {view === "timeline" && <Timeline entries={entries} onAdd={() => setModal("entry")} onDelete={(entryId) => update({ entries: workspace.entries.filter((entry) => entry.id !== entryId) })} />}
       {view === "evidence" && <EvidenceList items={evidence} onAdd={() => setModal("evidence")} onDelete={async (itemId) => { await fetch(`/api/evidence?id=${encodeURIComponent(itemId)}`, { method: "DELETE" }); update({ evidence: workspace.evidence.filter((item) => item.id !== itemId) }); }} />}
@@ -88,7 +96,14 @@ export default function AppPage() {
     {modal === "entry" && active && <EntryModal matter={active} onClose={() => setModal(null)} onSave={(entry) => { update({ entries: [...workspace.entries, entry] }); setModal(null); setView("timeline"); }} />}
     {modal === "evidence" && active && <EvidenceModal matter={active} onClose={() => setModal(null)} onSave={(item) => { update({ evidence: [...workspace.evidence, item] }); setModal(null); setView("evidence"); }} />}
     {modal === "scan" && active && <ScanModal matter={active} onClose={() => setModal(null)} onSave={(item) => { update({ evidence: [...workspace.evidence, item] }); setModal(null); setView("evidence"); }} />}
+    {modal === "upgrade" && <Upgrade plan={plan} usage={usage} onClose={()=>setModal(null)} />}
   </main>;
+}
+
+function Upgrade({plan,usage,onClose}:{plan:Plan;usage:{matters:number;entries:number;evidence:number;scans:number;storage:number};onClose:()=>void}) {
+  const [busy,setBusy]=useState(false); const [error,setError]=useState("");
+  async function checkout(){setBusy(true);setError("");try{const response=await fetch("/api/billing/checkout",{method:"POST"});const data=await response.json() as {url?:string;error?:string};if(!response.ok||!data.url)throw new Error(data.error||"Checkout could not be started.");location.href=data.url;}catch(e){setError(e instanceof Error?e.message:"Checkout could not be started.");setBusy(false);}}
+  return <Dialog title={plan==="plus"?"You have PROVya Plus":"Unlock the complete record"} copy={plan==="plus"?"Your lifetime license is active. There are no recurring software charges.":"One purchase unlocks every personal-use feature. No subscription."} onClose={onClose}>{plan==="free"&&<><div className="upgrade-price"><b>$39</b><span>one time</span></div><div className="upgrade-grid"><section><small>FREE</small><b>Good for trying PROVya</b><ul><li>1 active matter</li><li>25 timeline entries</li><li>10 evidence files</li><li>3 handwriting scans</li><li>100 MB secure storage</li></ul></section><section className="featured"><small>PLUS · LIFETIME</small><b>Complete personal use</b><ul><li>Unlimited matters and entries</li><li>Unlimited handwriting transcription</li><li>Reviewed transcription PDFs</li><li>Complete record exports</li><li>2 GB secure storage</li></ul></section></div><div className="usage-line">Free usage: {usage.matters}/1 matter · {usage.entries}/25 entries · {usage.evidence}/10 files · {usage.scans}/3 scans</div>{error&&<p className="mvp-error">{error}</p>}<button className="mvp-submit plus-submit" onClick={checkout} disabled={busy}>{busy?"Opening secure checkout…":"Get PROVya Plus — $39 once →"}</button><p className="upgrade-fine">Personal-use lifetime software license. Includes up to 2 GB hosted storage. No subscription.</p></>}{plan==="plus"&&<div className="plus-confirm"><b>✓ Lifetime access active</b><p>Unlimited matters, entries, handwriting transcription, PDFs, and up to 2 GB secure storage.</p></div>}</Dialog>;
 }
 
 function ChoiceField({ label, options, choice, setChoice }: { label: string; options: string[]; choice: Choice; setChoice: (choice: Choice) => void }) {

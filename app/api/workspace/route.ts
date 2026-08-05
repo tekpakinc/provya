@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { getPlan, limits } from "@/lib/billing";
 
 function owner(request: Request) {
   const authenticated = request.headers.get("oai-authenticated-user-id");
@@ -21,13 +22,24 @@ export async function GET(request: Request) {
   await ready();
   const row = await env.DB.prepare("SELECT payload, updated_at FROM workspaces WHERE owner_id = ?")
     .bind(ownerId).first<{ payload: string; updated_at: number }>();
-  return Response.json(row ? { workspace: JSON.parse(row.payload), updatedAt: row.updated_at } : { workspace: null });
+  const plan = await getPlan(ownerId);
+  return Response.json(row ? { workspace: JSON.parse(row.payload), updatedAt: row.updated_at, plan } : { workspace: null, plan });
 }
 
 export async function PUT(request: Request) {
   const ownerId = owner(request);
   if (!ownerId) return Response.json({ error: "Sign in required." }, { status: 401 });
   const workspace = await request.json();
+  const plan = await getPlan(ownerId);
+  const allowance = limits[plan];
+  const matters = Array.isArray(workspace?.matters) ? workspace.matters : [];
+  const entries = Array.isArray(workspace?.entries) ? workspace.entries : [];
+  const evidence = Array.isArray(workspace?.evidence) ? workspace.evidence : [];
+  const scans = evidence.filter((item: { transcription?: unknown }) => typeof item?.transcription === "string").length;
+  const storage = evidence.reduce((sum: number, item: { size?: unknown }) => sum + (typeof item?.size === "number" ? item.size : 0), 0);
+  if (matters.length > allowance.matters || entries.length > allowance.entries || evidence.length > allowance.evidence || scans > allowance.scans || storage > allowance.storage) {
+    return Response.json({ error: "This workspace exceeds the current plan limits.", upgradeRequired: true }, { status: 402 });
+  }
   const payload = JSON.stringify(workspace);
   if (payload.length > 2_000_000) return Response.json({ error: "Workspace is too large." }, { status: 413 });
   await ready();

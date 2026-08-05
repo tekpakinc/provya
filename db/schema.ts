@@ -5,3 +5,11 @@ export const workspaces = sqliteTable("workspaces", {
   payload: text("payload").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
+
+export const entitlements = sqliteTable("entitlements", {
+  ownerId: text("owner_id").primaryKey(),
+  plan: text("plan").notNull().default("free"),
+  provider: text("provider"),
+  purchaseId: text("purchase_id"),
+  purchasedAt: integer("purchased_at"),
+});
