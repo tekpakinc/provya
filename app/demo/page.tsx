@@ -1,9 +1,31 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type View = "overview" | "evidence" | "conversation" | "timeline" | "packet";
 type EvidenceItem = { id: number; name: string; type: string; date: string; source: string; hash: string; tag: string; status: string };
+type Matter = { id: number; title: string; type: string; role: string; status: string };
+type Choice = { value: string; other: string };
+
+const defaultMatters: Matter[] = [
+  { id: 1, title: "Morgan v. Crestview", type: "Housing & property", role: "Tenant", status: "Active" },
+  { id: 2, title: "Parenting record", type: "Family & parenting", role: "Parent", status: "Ongoing" },
+  { id: 3, title: "Rivera Design project", type: "Freelance work", role: "Service provider", status: "Active" },
+];
+
+const eventChoices: Record<string, string[]> = {
+  "Family & parenting": ["Exchange", "Schedule change", "Communication", "Child-related expense", "School", "Medical", "Missed parenting time", "Incident"],
+  "Freelance work": ["Scope or requirement", "Approval", "Delivery", "Invoice", "Payment", "Expense", "Feedback", "Communication"],
+  "Automotive repair": ["Intake condition", "Authorization", "Diagnostic", "Existing damage", "Repair progress", "Parts", "Road test", "Pickup or sign-off"],
+  "Contractor project": ["Site condition", "Scope", "Change order", "Approval", "Progress", "Concealed work", "Completion", "Payment"],
+  "Housing & property": ["Condition", "Maintenance request", "Notice", "Repair", "Expense", "Communication", "Inspection"],
+};
+
+function resolved(choice: Choice) { return choice.value === "Other" ? choice.other.trim() : choice.value; }
+
+function SelectWithOther({ label, options, choice, onChange, required = false }: { label: string; options: string[]; choice: Choice; onChange: (next: Choice) => void; required?: boolean }) {
+  return <label className="smart-field"><span>{label}</span><select required={required} value={choice.value} onChange={(e) => onChange({ value: e.target.value, other: "" })}><option value="">Select one</option>{options.map((option) => <option key={option}>{option}</option>)}<option>Other</option></select>{choice.value === "Other" && <input autoFocus placeholder={`Type ${label.toLowerCase()}`} value={choice.other} onChange={(e) => onChange({ ...choice, other: e.target.value })} />}</label>;
+}
 
 const initialEvidence: EvidenceItem[] = [
   { id: 1, name: "Move-in walkthrough", type: "Video", date: "Mar 02, 2026 · 10:14 AM", source: "iPhone 15 Pro", hash: "b4f94d8a…e021", tag: "Property condition", status: "Original preserved" },
@@ -45,7 +67,15 @@ export default function DemoPage() {
   const [query, setQuery] = useState("");
   const [packetReady, setPacketReady] = useState(false);
   const [notice, setNotice] = useState("");
+  const [matters, setMatters] = useState(defaultMatters);
+  const [activeMatterId, setActiveMatterId] = useState(1);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [showNewMatter, setShowNewMatter] = useState(false);
+  const [showNewEntry, setShowNewEntry] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const activeMatter = matters.find((matter) => matter.id === activeMatterId) || matters[0];
+
+  useEffect(() => { setShowOnboarding(!localStorage.getItem("provya-demo-profile")); }, []);
 
   const filteredMessages = useMemo(() => messages.filter((m) => m.text.toLowerCase().includes(query.toLowerCase())), [query]);
 
@@ -71,18 +101,19 @@ export default function DemoPage() {
       <header className="demo-topbar">
         <a href="/" aria-label="Back to PROVya home"><Brand /></a>
         <div className="demo-mode"><span /> Interactive product demo</div>
-        <div className="top-actions"><button className="ghost-button" onClick={() => setView("packet")}>Preview packet</button><button className="dark-button" onClick={() => fileRef.current?.click()}>＋ Add evidence</button></div>
+        <div className="top-actions"><button className="ghost-button" onClick={() => setShowOnboarding(true)}>Edit profile</button><button className="ghost-button" onClick={() => setView("packet")}>Preview packet</button><button className="dark-button" onClick={() => setShowNewEntry(true)}>+ New entry</button></div>
         <input ref={fileRef} className="sr-only" type="file" onChange={(event) => importFile(event.target.files?.[0])} />
       </header>
 
       <aside className="demo-sidebar">
-        <div className="matter-switcher"><small>ACTIVE MATTER</small><b>Morgan v. Crestview</b><span>Housing · Sample data</span></div>
+        <div className="matter-switcher"><small>ACTIVE MATTER</small><b>{activeMatter.title}</b><span>{activeMatter.type} · {activeMatter.status}</span></div>
         <nav aria-label="Demo sections">{nav.map((item) => <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => setView(item.id)}><span className={`nav-icon ${item.id}`} />{item.label}{item.count ? <em>{item.id === "evidence" ? evidence.length : item.count}</em> : null}</button>)}</nav>
         <div className="guide-card"><span>GUIDED COLLECTION</span><b>Housing condition</b><div><i style={{ width: "80%" }} /></div><small>4 of 5 recommended steps complete</small><button onClick={() => setView("overview")}>Continue checklist →</button></div>
         <div className="local-badge"><b>● Local-first demo</b><span>No sample data leaves this browser.</span></div>
       </aside>
 
       <section className="demo-main">
+        <div className="matter-tabs" aria-label="Your matters">{matters.map((matter) => <button key={matter.id} className={matter.id === activeMatterId ? "active" : ""} onClick={() => { setActiveMatterId(matter.id); setView("overview"); }}><small>{matter.type}</small><b>{matter.title}</b></button>)}<button className="add-matter" onClick={() => setShowNewMatter(true)}>+ New matter</button></div>
         {notice && <div className="demo-toast">✓ {notice}</div>}
         {view === "overview" && <Overview onNavigate={setView} evidenceCount={evidence.length} />}
         {view === "evidence" && <Evidence evidence={evidence} onImport={() => fileRef.current?.click()} />}
@@ -90,12 +121,37 @@ export default function DemoPage() {
         {view === "timeline" && <Timeline />}
         {view === "packet" && <Packet ready={packetReady} setReady={setPacketReady} download={downloadManifest} evidenceCount={evidence.length} />}
       </section>
+      {showOnboarding && <Onboarding onClose={() => setShowOnboarding(false)} />}
+      {showNewMatter && <NewMatter onClose={() => setShowNewMatter(false)} onSave={(matter) => { setMatters((all) => [...all, matter]); setActiveMatterId(matter.id); setShowNewMatter(false); setNotice("Matter created and workspace tailored."); setTimeout(() => setNotice(""), 3000); }} />}
+      {showNewEntry && <NewEntry matters={matters} activeMatter={activeMatter} onClose={() => setShowNewEntry(false)} onSave={(summary) => { setShowNewEntry(false); setNotice(`${summary} added to ${activeMatter.title}.`); setTimeout(() => setNotice(""), 3500); }} />}
     </main>
   );
 }
 
 function PageHead({ eyebrow, title, copy, action }: { eyebrow: string; title: string; copy: string; action?: React.ReactNode }) {
   return <div className="demo-page-head"><div><span>{eyebrow}</span><h1>{title}</h1><p>{copy}</p></div>{action}</div>;
+}
+
+function Modal({ title, eyebrow, children, onClose }: { title: string; eyebrow: string; children: React.ReactNode; onClose: () => void }) {
+  return <div className="modal-backdrop"><section className="provya-modal" role="dialog" aria-modal="true" aria-label={title}><button className="modal-close" onClick={onClose} aria-label="Close">×</button><small className="modal-eyebrow">{eyebrow}</small><h2>{title}</h2>{children}</section></div>;
+}
+
+function Onboarding({ onClose }: { onClose: () => void }) {
+  const [userType, setUserType] = useState<Choice>({ value: "", other: "" });
+  const [purpose, setPurpose] = useState<Choice>({ value: "", other: "" });
+  const save = () => { if (!resolved(userType) || !resolved(purpose)) return; localStorage.setItem("provya-demo-profile", JSON.stringify({ userType: resolved(userType), purpose: resolved(purpose) })); onClose(); };
+  return <Modal eyebrow="LET'S PERSONALIZE PROVYA" title="What are you documenting?" onClose={onClose}><p className="modal-lede">Your answers tailor suggested fields, event types, and checklists. You can keep completely different matters in one account.</p><div className="modal-grid"><SelectWithOther required label="I am a" options={["Self-represented person", "Parent or caregiver", "Freelancer or contractor", "Business or service provider", "Attorney or legal professional", "Attorney's client"]} choice={userType} onChange={setUserType} /><SelectWithOther required label="My first matter is about" options={["Family & parenting", "Housing & property", "Freelance work", "Automotive repair", "Contractor project", "Shipping or delivery", "Legal or administrative"]} choice={purpose} onChange={setPurpose} /></div><div className="privacy-note">🔒 Demo settings stay in this browser.</div><button className="dark-button modal-primary" disabled={!resolved(userType) || !resolved(purpose)} onClick={save}>Build my workspace →</button></Modal>;
+}
+
+function NewMatter({ onClose, onSave }: { onClose: () => void; onSave: (matter: Matter) => void }) {
+  const [title, setTitle] = useState(""); const [type, setType] = useState<Choice>({ value: "", other: "" }); const [role, setRole] = useState<Choice>({ value: "", other: "" }); const [status, setStatus] = useState<Choice>({ value: "Active", other: "" });
+  return <Modal eyebrow="NEW MATTER" title="Create a focused workspace" onClose={onClose}><p className="modal-lede">The matter type controls the quick choices PROVya offers when you document something.</p><div className="modal-grid"><label className="smart-field full"><span>Matter name</span><input placeholder="e.g. Parenting record — 2026" value={title} onChange={(e) => setTitle(e.target.value)} /></label><SelectWithOther label="Matter type" options={["Family & parenting", "Housing & property", "Freelance work", "Automotive repair", "Contractor project", "Shipping or delivery", "Legal or administrative"]} choice={type} onChange={setType} /><SelectWithOther label="Your role" options={["Parent", "Tenant", "Property owner", "Client", "Service provider", "Vehicle owner", "Attorney", "Self-represented person"]} choice={role} onChange={setRole} /><SelectWithOther label="Status" options={["Active", "Ongoing", "Waiting", "Resolved", "Archived"]} choice={status} onChange={setStatus} /></div><button className="dark-button modal-primary" disabled={!title.trim() || !resolved(type)} onClick={() => onSave({ id: Date.now(), title: title.trim(), type: resolved(type), role: resolved(role) || "Not specified", status: resolved(status) })}>Create matter →</button></Modal>;
+}
+
+function NewEntry({ matters, activeMatter, onClose, onSave }: { matters: Matter[]; activeMatter: Matter; onClose: () => void; onSave: (summary: string) => void }) {
+  const [matterId, setMatterId] = useState(String(activeMatter.id)); const selected = matters.find((m) => String(m.id) === matterId) || activeMatter;
+  const [kind, setKind] = useState<Choice>({ value: "", other: "" }); const [party, setParty] = useState<Choice>({ value: "", other: "" }); const [outcome, setOutcome] = useState<Choice>({ value: "", other: "" }); const [source, setSource] = useState<Choice>({ value: "", other: "" }); const [notes, setNotes] = useState("");
+  return <Modal eyebrow="QUICK ADD" title="Add a documented entry" onClose={onClose}><div className="modal-grid"><label className="smart-field"><span>Matter</span><select value={matterId} onChange={(e) => { setMatterId(e.target.value); setKind({ value: "", other: "" }); }}>{matters.map((matter) => <option value={matter.id} key={matter.id}>{matter.title}</option>)}</select></label><SelectWithOther label="Entry type" options={eventChoices[selected.type] || ["Communication", "Agreement", "Incident", "Expense", "Document", "Milestone"]} choice={kind} onChange={setKind} /><SelectWithOther label="Person or party" options={["Me", "Co-parent", "Client", "Customer", "Attorney", "Contractor", "Property manager", "Repair shop"]} choice={party} onChange={setParty} /><SelectWithOther label="Outcome or status" options={["Completed", "Acknowledged", "Agreed", "Declined", "No response", "Pending", "Disputed"]} choice={outcome} onChange={setOutcome} /><SelectWithOther label="Source" options={["In-app note", "Text message", "Email", "Photo or video", "Receipt or invoice", "PDF or document", "Phone call summary"]} choice={source} onChange={setSource} /><label className="smart-field"><span>Date and time</span><input type="datetime-local" /></label><label className="smart-field full"><span>What happened?</span><textarea placeholder="Keep it factual. Add files after saving if needed." value={notes} onChange={(e) => setNotes(e.target.value)} /></label></div><button className="dark-button modal-primary" disabled={!resolved(kind)} onClick={() => onSave(resolved(kind))}>Save documented entry →</button></Modal>;
 }
 
 function Overview({ onNavigate, evidenceCount }: { onNavigate: (view: View) => void; evidenceCount: number }) {
